@@ -32,3 +32,5 @@ The `flutter-intellij` repository provides the official Flutter plugin for Intel
 ## System Verification
 - Run: `./gradlew test` to execute unit tests.
 - Run: `./gradlew buildPlugin` to verify compilation.
+
+<!-- roomba stub edit: 2026-09-25T15:51:40.922679Z -->
