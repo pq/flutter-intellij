@@ -16,34 +16,19 @@ import org.jetbrains.annotations.Nullable;
 import java.util.List;
 
 /**
- * Fold lines like '/Users/.../projects/flutter/flutter/bin/flutter packages get', and their
- * Windows equivalents, such as 'C:\flutter\bin\flutter.bat packages get'.
+ * Fold lines like '/Users/.../projects/flutter/flutter/bin/flutter --no-color packages get'.
  */
 public class FlutterConsoleFolding extends ConsoleFolding {
   private static final String flutterMarker =
-    FlutterConstants.INDEPENDENT_PATH_SEPARATOR + FlutterSdkUtil.flutterScriptName() + " ";
-
-  private static final String windowsFlutterMarker = "\\" + FlutterSdkUtil.flutterScriptName() + " ";
-
-  /**
-   * Returns the index of the earliest Flutter marker in the text, using either path separator, or -1 if there is none.
-   */
-  private static int indexOfMarker(@NotNull String text) {
-    final int index = text.indexOf(flutterMarker);
-    final int windowsIndex = text.indexOf(windowsFlutterMarker);
-    if (index == -1) {
-      return windowsIndex;
-    }
-    if (windowsIndex == -1) {
-      return index;
-    }
-    return Math.min(index, windowsIndex);
-  }
+    FlutterConstants.INDEPENDENT_PATH_SEPARATOR + FlutterSdkUtil.flutterScriptName() + " --no-color ";
 
   @Override
   public boolean shouldFoldLine(@NotNull Project project, @NotNull String line) {
-    final int index = indexOfMarker(line);
-    return index != -1 && line.indexOf(' ') > index;
+    if (line.contains(flutterMarker)) {
+      return line.indexOf(' ') > line.indexOf(flutterMarker);
+    }
+
+    return false;
   }
 
   @Override
@@ -56,9 +41,8 @@ public class FlutterConsoleFolding extends ConsoleFolding {
   @Override
   public String getPlaceholderText(@NotNull Project project, @NotNull List<String> lines) {
     final String fullText = StringUtil.join(lines, "\n");
-    final int index = indexOfMarker(fullText);
+    final int index = fullText.indexOf(flutterMarker);
     if (index != -1) {
-      // Both markers have the same length, so the arguments start right after it.
       String results = "flutter " + fullText.substring(index + flutterMarker.length());
       results = results.replace("--machine ", "");
       results = results.replace("--start-paused ", "");

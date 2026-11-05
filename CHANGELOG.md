@@ -4,13 +4,11 @@
 
 ### Changed
 - Migrated test detection from `FlutterOutline` to Dart PSI. (#9159)
-- Avoiding `--no-color` on Flutter commands run from the plugin, and keeping their console command lines folded. (#9161)
 
 ### Removed
 - Legacy Dart Analysis Server URI mapping during debugging. (#9149)
 
 ### Fixed
-- Empty Flutter SDK dropdown in the New Project wizard when switching to Flutter after starting the wizard on another language. (#9106)
 
 ## 97.0.0
 
