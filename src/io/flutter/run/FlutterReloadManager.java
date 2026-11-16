@@ -108,7 +108,7 @@ public class FlutterReloadManager implements Disposable {
 
   private final @NotNull Project myProject;
 
-  private Notification lastNotification;
+  private volatile Notification lastNotification;
 
   /**
    * Receives one reload-on-save analytics event per attempt that passes the cheap guards in
