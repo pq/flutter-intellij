@@ -315,6 +315,10 @@ public class FlutterApp implements Disposable {
 
   /**
    * Perform a hot restart of the app.
+   * <p>
+   * The returned future completes after the app's state has gone back to STARTED. If the restart fails, it completes
+   * exceptionally with a {@link java.util.concurrent.CompletionException} wrapping the cause; if the app isn't
+   * running, with an {@link AppShuttingDownException} and nothing is sent.
    */
   public CompletableFuture<DaemonApi.RestartResult> performRestartApp(@NotNull String reason) {
     if (myAppId == null) {
@@ -325,16 +329,20 @@ public class FlutterApp implements Disposable {
       return result;
     }
 
+    if (!transitionUnlessTerminating(State.RESTARTING)) {
+      return notRunning("restart");
+    }
+
     restartCount++;
     userReloadCount = 0;
 
     LocalHistory.getInstance().putSystemLabel(getProject(), "Flutter hot restart");
 
-    changeState(State.RESTARTING);
-
+    // Restore STARTED on success *and* failure. With thenAccept, an exceptional completion (for example, an error
+    // response from the daemon) left the app in RESTARTING, and isReloading() then blocked every later reload-on-save.
+    // Return the chained future so that callers' callbacks run after the state is restored.
     final CompletableFuture<DaemonApi.RestartResult> future =
-      myDaemonApi.restartApp(myAppId, true, false, reason);
-    future.thenAccept(result -> changeState(State.STARTED));
+      myDaemonApi.restartApp(myAppId, true, false, reason).whenComplete((result, t) -> restoreStartedFrom(State.RESTARTING));
     future.thenRun(this::notifyAppRestarted);
     return future;
   }
@@ -353,40 +361,47 @@ public class FlutterApp implements Disposable {
    * This state change is useful as we can delay the actual hot reload slightly, but still change the
    * app state in order to prevent starting two simultaneous hot reloads.
    * <p>
-   * Return the previous app state.
+   * Returns the previous state ({@link State#STARTED}), or null if the app was not in STARTED, for example because
+   * it started terminating or another reload or restart began first. The state is then left unchanged.
    */
-  public State transitionStartingHotReload() {
-    final State newState = State.RELOADING;
-    final State oldState = myState.getAndSet(newState);
-    if (oldState != newState) {
-      listenersDispatcher.getMulticaster().stateChanged(newState);
+  public @Nullable State transitionStartingHotReload() {
+    if (!myState.compareAndSet(State.STARTED, State.RELOADING)) {
+      return null;
     }
-    return oldState;
+    listenersDispatcher.getMulticaster().stateChanged(State.RELOADING);
+    return State.STARTED;
   }
 
   /**
    * Cancel a hot reload state and restore the app's previous state (generally, `State.STARTED`).
    */
   public void cancelHotReloadState(@Nullable State previousState) {
-    if (previousState != null) {
-      changeState(previousState);
+    // Only undo our own RELOADING. If the app started terminating in the meantime, leave it alone.
+    if (previousState != null && myState.compareAndSet(State.RELOADING, previousState)) {
+      listenersDispatcher.getMulticaster().stateChanged(previousState);
     }
   }
 
   /**
    * Perform a hot reload of the app.
+   * <p>
+   * The returned future completes after the app's state has gone back to STARTED. If the reload fails, it completes
+   * exceptionally with a {@link java.util.concurrent.CompletionException} wrapping the cause; if the app isn't
+   * running, with an {@link AppShuttingDownException} and nothing is sent.
    */
   public CompletableFuture<DaemonApi.RestartResult> performHotReload(boolean pauseAfterRestart, @NotNull String reason) {
     if (myAppId == null) {
       LOG.warn("cannot reload Flutter app because app id is not set");
 
-      if (getState() == State.RELOADING) {
-        changeState(State.STARTED);
-      }
+      restoreStartedFrom(State.RELOADING);
 
       final CompletableFuture<DaemonApi.RestartResult> result = new CompletableFuture<>();
       result.completeExceptionally(new IllegalStateException("cannot reload Flutter app because app id is not set"));
       return result;
+    }
+
+    if (!transitionUnlessTerminating(State.RELOADING)) {
+      return notRunning("reload");
     }
 
     reloadCount++;
@@ -394,11 +409,9 @@ public class FlutterApp implements Disposable {
 
     LocalHistory.getInstance().putSystemLabel(getProject(), "hot reload #" + userReloadCount);
 
-    changeState(State.RELOADING);
-
+    // See performRestartApp: restore STARTED whether the reload succeeded or failed, before callers' callbacks run.
     final CompletableFuture<DaemonApi.RestartResult> future =
-      myDaemonApi.restartApp(myAppId, false, pauseAfterRestart, reason);
-    future.thenAccept(result -> changeState(State.STARTED));
+      myDaemonApi.restartApp(myAppId, false, pauseAfterRestart, reason).whenComplete((result, t) -> restoreStartedFrom(State.RELOADING));
     future.thenRun(this::notifyAppReloaded);
     return future;
   }
@@ -463,6 +476,54 @@ public class FlutterApp implements Disposable {
   @Nullable
   public ConsoleView getConsole() {
     return myConsole;
+  }
+
+  /**
+   * Moves to {@code target} if the app is running (STARTED, RELOADING, or RESTARTING), without overwriting a
+   * concurrent state change. Returns false, leaving the state unchanged, otherwise (STARTING, TERMINATING, or
+   * TERMINATED).
+   * <p>
+   * A reload during a restart moves RESTARTING to RELOADING, as before; the app then returns to STARTED when the
+   * reload finishes.
+   */
+  private boolean transitionUnlessTerminating(@NotNull State target) {
+    while (true) {
+      final State current = myState.get();
+      if (current != State.STARTED && current != State.RELOADING && current != State.RESTARTING) {
+        return false;
+      }
+      if (current == target) {
+        return true;
+      }
+      if (myState.compareAndSet(current, target)) {
+        listenersDispatcher.getMulticaster().stateChanged(target);
+        return true;
+      }
+    }
+  }
+
+  private static @NotNull CompletableFuture<DaemonApi.RestartResult> notRunning(@NotNull String operation) {
+    final CompletableFuture<DaemonApi.RestartResult> result = new CompletableFuture<>();
+    result.completeExceptionally(new AppShuttingDownException("cannot " + operation + " Flutter app because it is not running"));
+    return result;
+  }
+
+  /** Why a reload or restart was refused: the app is not running (starting up, or shutting down). */
+  public static final class AppShuttingDownException extends IllegalStateException {
+    public AppShuttingDownException(@NotNull String message) {
+      super(message);
+    }
+  }
+
+  /**
+   * Moves back to {@link State#STARTED} when a reload or restart finishes, but only if the app is still in
+   * {@code expected}. If the app started terminating in the meantime, it is left alone rather than brought back to
+   * STARTED.
+   */
+  private void restoreStartedFrom(@NotNull State expected) {
+    if (myState.compareAndSet(expected, State.STARTED)) {
+      listenersDispatcher.getMulticaster().stateChanged(State.STARTED);
+    }
   }
 
   /**

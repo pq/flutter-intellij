@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+- Reload-on-save analytics: one event per attempt with its trigger, outcome (including the reasons a reload was skipped), duration, and flutter_tools error code. (#TBD)
 
 ### Changed
 - Routing Extract Flutter Widget refactoring to LSP code actions when experimental LSP features are enabled. (#9202)
@@ -16,6 +17,9 @@
 - Unresolved `JaroWinkler` class error when matching custom icon font files in Android Studio 2026.2. (#9204)
 - `AlreadyDisposedException` when a project is closed while Flutter module setup is still queued. (#9222)
 - Failure running a single Flutter test whose name contains escaped characters (such as `\'` or `\$`). (#9205)
+- Reload-on-save stopping for the rest of the session after a hot reload or restart failed with a daemon error, and the "Reloading…" notification staying up after such a failure or when the app stopped mid-reload. (#TBD)
+- A Flutter app that was shutting down could be moved back into a reloading or started state by reload-on-save or a finishing reload. (#TBD)
+- When a hot reload or restart fails with an exception (for example, a daemon error response), the notification shows only the first line of the error; the full error is logged. (#TBD)
 
 ## 98.0.0
 
